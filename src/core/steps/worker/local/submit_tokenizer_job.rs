@@ -11,7 +11,7 @@ use crate::workflow::{StepExecutor, StepResult, WorkflowContext, WorkflowError, 
 use crate::{
     core::{
         steps::{workflow_data::LocalWorkerWorkflowData, TokenizerConfigRequest},
-        Job,
+        ConnectionMode, Job,
     },
     tokenizer::TokenizerRegistry,
 };
@@ -29,6 +29,19 @@ impl StepExecutor<LocalWorkerWorkflowData> for SubmitTokenizerJobStep {
         &self,
         context: &mut WorkflowContext<LocalWorkerWorkflowData>,
     ) -> WorkflowResult<StepResult> {
+        match context.data.connection_mode.as_ref() {
+            Some(ConnectionMode::Grpc { .. }) => {}
+            Some(ConnectionMode::Http) => {
+                info!("Skipping automatic tokenizer registration for HTTP workers");
+                return Ok(StepResult::Success);
+            }
+            None => {
+                return Err(WorkflowError::ContextValueNotFound(
+                    "connection_mode".to_string(),
+                ));
+            }
+        }
+
         let labels = &context.data.final_labels;
         let app_context = context
             .data
