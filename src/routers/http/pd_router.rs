@@ -619,7 +619,7 @@ impl PDRouter {
             self.process_prefill_response(
                 prefill_request.send().await,
                 prefill.url(),
-                context.needs_prefill_json_merge(),
+                context.return_logprob || context.needs_prefill_json_merge(),
             )
             .await
         };
