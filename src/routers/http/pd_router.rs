@@ -562,38 +562,11 @@ impl PDRouter {
         }
     }
 
-    fn requests_for_pd_stages(
-        mut request: Value,
-        prefill_rank: Option<i32>,
-        decode_rank: Option<i32>,
-    ) -> Result<(Value, Value), String> {
-        let obj = request
-            .as_object_mut()
-            .ok_or_else(|| "Request must be a JSON object".to_string())?;
-        let routed_rank = obj.remove("routed_dp_rank").filter(|rank| !rank.is_null());
-        let old_rank = obj.remove("data_parallel_rank").filter(|rank| !rank.is_null());
-        let legacy_rank = routed_rank.or(old_rank);
-        let prefill_rank = prefill_rank.map(Value::from).or(legacy_rank.clone());
-        let decode_rank = decode_rank.map(Value::from).or(legacy_rank);
-
-        let mut prefill_request = request.clone();
-        let mut decode_request = request;
-        if let Some(rank) = prefill_rank.as_ref() {
-            prefill_request["routed_dp_rank"] = rank.clone();
-            prefill_request["disagg_prefill_dp_rank"] = rank.clone();
-            decode_request["disagg_prefill_dp_rank"] = rank.clone();
-        }
-        if let Some(rank) = decode_rank {
-            decode_request["routed_dp_rank"] = rank;
-        }
-        Ok((prefill_request, decode_request))
-    }
-
     // Internal method that performs the actual dual dispatch (without retry logic)
     async fn execute_dual_dispatch_internal(
         &self,
         headers: Option<&HeaderMap>,
-        json_request: Value,
+        mut json_request: Value,
         context: PDRequestContext<'_>,
         prefill: Arc<dyn Worker>,
         decode: Arc<dyn Worker>,
@@ -610,33 +583,40 @@ impl PDRouter {
         inject_trace_context_http(&mut headers_with_trace);
         let headers = Some(&headers_with_trace);
 
-        let (prefill_json, decode_json) = if context.route == "/generate" {
-            match Self::requests_for_pd_stages(
-                json_request,
-                context.prefill_rank,
-                context.decode_rank,
-            ) {
-                Ok(requests) => requests,
-                Err(error) => return Self::handle_serialization_error(error),
+        if context.route == "/generate" {
+            if let Some(request) = json_request.as_object_mut() {
+                request.remove("data_parallel_rank");
+                if let Some(rank) = context.prefill_rank {
+                    request.insert("routed_dp_rank".to_string(), Value::from(rank));
+                    request.insert("disagg_prefill_dp_rank".to_string(), Value::from(rank));
+                }
             }
-        } else {
-            (json_request.clone(), json_request)
-        };
+        }
 
         // Build both requests
         let prefill_request = self.build_post_with_headers(
             &self.client,
             prefill.url(),
             context.route,
-            &prefill_json,
+            &json_request,
             headers,
             false,
         );
+        // The prefill body is serialized above, so only its rank needs changing for decode.
+        if context.decode_rank != context.prefill_rank {
+            if let Some(request) = json_request.as_object_mut() {
+                if let Some(rank) = context.decode_rank {
+                    request.insert("routed_dp_rank".to_string(), Value::from(rank));
+                } else {
+                    request.remove("routed_dp_rank");
+                }
+            }
+        }
         let decode_request = self.build_post_with_headers(
             &self.client,
             decode.url(),
             context.route,
-            &decode_json,
+            &json_request,
             headers,
             false,
         );
@@ -1449,6 +1429,7 @@ impl RouterTrait for PDRouter {
         };
 
         let batch_size = Self::get_generate_batch_size(body);
+        let legacy_rank = body.routed_dp_rank.or(body.data_parallel_rank);
 
         let context = PDRequestContext {
             route: "/generate",
@@ -1456,8 +1437,8 @@ impl RouterTrait for PDRouter {
             is_stream,
             return_logprob,
             return_routed_experts: body.return_routed_experts,
-            prefill_rank: body.routed_prefill_dp_rank,
-            decode_rank: body.routed_decode_dp_rank,
+            prefill_rank: body.routed_prefill_dp_rank.or(legacy_rank),
+            decode_rank: body.routed_decode_dp_rank.or(legacy_rank),
             request_text,
             model_id,
             headers: headers.cloned(),
