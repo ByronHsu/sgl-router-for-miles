@@ -573,7 +573,6 @@ impl PDRouter {
         let routed_rank = obj.remove("routed_dp_rank").filter(|rank| !rank.is_null());
         let old_rank = obj.remove("data_parallel_rank").filter(|rank| !rank.is_null());
         let legacy_rank = routed_rank.or(old_rank);
-        let has_stage_rank = prefill_rank.is_some() || decode_rank.is_some();
         let prefill_rank = prefill_rank.map(Value::from).or(legacy_rank.clone());
         let decode_rank = decode_rank.map(Value::from).or(legacy_rank);
 
@@ -581,18 +580,11 @@ impl PDRouter {
         let mut decode_request = request;
         if let Some(rank) = prefill_rank.as_ref() {
             prefill_request["routed_dp_rank"] = rank.clone();
+            prefill_request["disagg_prefill_dp_rank"] = rank.clone();
+            decode_request["disagg_prefill_dp_rank"] = rank.clone();
         }
         if let Some(rank) = decode_rank {
             decode_request["routed_dp_rank"] = rank;
-        }
-        if has_stage_rank {
-            prefill_request
-                .as_object_mut()
-                .unwrap()
-                .remove("disagg_prefill_dp_rank");
-            if let Some(rank) = prefill_rank {
-                decode_request["disagg_prefill_dp_rank"] = rank;
-            }
         }
         Ok((prefill_request, decode_request))
     }
