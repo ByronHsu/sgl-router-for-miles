@@ -152,6 +152,14 @@ pub struct GenerateRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub routed_dp_rank: Option<i32>,
 
+    /// HTTP PD router: override the rank used by the prefill stage.
+    #[serde(skip_serializing)]
+    pub routed_prefill_dp_rank: Option<i32>,
+
+    /// HTTP PD router: override the rank used by the decode stage.
+    #[serde(skip_serializing)]
+    pub routed_decode_dp_rank: Option<i32>,
+
     /// PD disagg — hint telling decode which prefill DP worker has the KV cache
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disagg_prefill_dp_rank: Option<i32>,
