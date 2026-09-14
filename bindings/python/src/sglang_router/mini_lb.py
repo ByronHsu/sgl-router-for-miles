@@ -296,12 +296,14 @@ async def health_generate():
 
 
 @app.post("/flush_cache")
-async def flush_cache():
+async def flush_cache(timeout: Optional[float] = None):
+    # Workers use a positive timeout to wait for requests to drain before flushing.
+    params = None if timeout is None else {"timeout": timeout}
     async with aiohttp.ClientSession() as session:
         # Create the tasks
         tasks = []
         for server in chain(lb.prefill_urls, lb.decode_urls):
-            tasks.append(session.post(f"{server}/flush_cache"))
+            tasks.append(session.post(f"{server}/flush_cache", params=params))
         for i, response in enumerate(asyncio.as_completed(tasks)):
             await response
     return Response(status_code=200)
